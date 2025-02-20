@@ -1,4 +1,21 @@
-import bpy, os, subprocess, zipfile, tempfile, shutil, stat, time, urllib.request, re
+# Blender MOF Wrapper for UV Unwrapper - Copyright (C) 2025 Ultikynnys
+#
+# This file is part of Blender MOF Wrapper for UV Unwrapper .
+#
+# Blender MOF Wrapper for UV Unwrapper  is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3
+#
+# Blender MOF Wrapper for UV Unwrapper  is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Blender MOF Wrapper for UV Unwrapper.  If not, see <https://www.gnu.org/licenses/>.
+
+
+import bpy, os, subprocess, zipfile, tempfile, shutil,re
 import mathutils
 from bpy.props import (
     StringProperty, IntProperty, FloatProperty, BoolProperty, PointerProperty
@@ -6,12 +23,12 @@ from bpy.props import (
 from bpy.types import Operator, Panel, AddonPreferences, PropertyGroup
 
 bl_info = {
-    "name": "Blender MOF UV Unwrapper",
+    "name": "Blender Wrapper for MOF UV Unwrapper",
     "blender": (4, 3, 0),
     "category": "UV",
     "version": (1, 0, 1),
     "author": "Ultikynnys",
-    "description": "Wrapper that makes the Unwrapper work in Blender",
+    "description": "Wrapper that makes the MOF Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
 }
 
@@ -69,7 +86,7 @@ class MOFProperties(PropertyGroup):
     uv_margin: FloatProperty(name="UV Margin", default=0.1, min=0.0)
 
 # -------------------------------------------------------------------
-# Addon Preferences with separate version check operator
+# Addon Preferences with version check operator
 # -------------------------------------------------------------------
 class MOFAddonPreferences(AddonPreferences):
     bl_idname = __package__
@@ -95,52 +112,7 @@ class MOFAddonPreferences(AddonPreferences):
         row.label(text=f"Zip Version: {self.version}")
         row.operator("wm.checkmofzipversion", text="Check Version")
         if not self.executable_path or not os.path.exists(bpy.path.abspath(self.executable_path)):
-            layout.operator("wm.downloadmofzip", icon='URL', text="Download Zip File")
-
-# -------------------------------------------------------------------
-# Operator to download the zip file from the given URL
-# -------------------------------------------------------------------
-class DownloadMOFZipOperator(Operator):
-    bl_idname = "wm.downloadmofzip"
-    bl_label = "Download MinistryOfFlat Zip"
-
-    filepath: StringProperty(
-        name="Filepath",
-        description="Choose where to save the downloaded zip file (include a filename)",
-        subtype='FILE_PATH'
-    )
-    filename_ext = ".zip"
-    filter_glob: StringProperty(
-        default="*.zip",
-        options={'HIDDEN'}
-    )
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
-
-    def execute(self, context):
-        prefs = context.preferences.addons[__package__].preferences
-        url = "https://www.quelsolaar.com/MinistryOfFlat_Release.zip"
-        # If only a directory is provided, append a default filename.
-        if os.path.basename(self.filepath) == "":
-            target_path = os.path.join(self.filepath, "MinistryOfFlat_Release.zip")
-        else:
-            target_path = self.filepath
-        # Remove any existing extension and enforce ".zip"
-        target_path = os.path.splitext(target_path)[0] + ".zip"
-        try:
-            urllib.request.urlretrieve(url, target_path)
-            self.report({'INFO'}, "Downloaded zip to " + target_path)
-            # Set the executable path; version will be updated via the separate check operator.
-            prefs.executable_path = target_path
-        except Exception as e:
-            if "Permission denied" in str(e):
-                self.report({'INFO'}, f"Permission denied: {e}. Please choose another folder or run Blender as Administrator.")
-            else:
-                self.report({'ERROR'}, f"Failed to download zip: {e}")
-            return {'CANCELLED'}
-        return {'FINISHED'}
+            layout.label(text="Please download the MinistryOfFlat zip file from the official site.", icon='INFO')
 
 # -------------------------------------------------------------------
 # Operator to check/extract version from the zip file
@@ -436,12 +408,12 @@ class MOFMOFPanel(Panel):
         layout.separator()
         props = context.scene.mof_properties
         
-        # Show zip file status and version/download prompt
+        # Show zip file status and version prompt.
         prefs = context.preferences.addons[__package__].preferences
         zip_path = bpy.path.abspath(prefs.executable_path) if prefs.executable_path else ""
         if not prefs.executable_path or not os.path.exists(zip_path):
             layout.label(text="MinistryOfFlat zip file not set", icon='ERROR')
-            layout.operator("wm.downloadmofzip", text="Download Zip File", icon='URL')
+            layout.label(text="Please download the MinistryOfFlat zip file from the official site.", icon='INFO')
             layout.prop(prefs, "executable_path")
         else:
             layout.label(text=f"Zip Version: {prefs.version}")
@@ -486,7 +458,6 @@ class MOFDebugPanel(Panel):
 # Registration
 # -------------------------------------------------------------------
 classes = (
-    DownloadMOFZipOperator,
     CheckMOFZipVersionOperator,
     MOFProperties,
     MOFAddonPreferences,
