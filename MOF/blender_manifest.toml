@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ultikynnys_BlenderMOFWrapper"
-version = "1.0.0"
+version = "1.0.1"
 name = "Blender MOF UV Unwrapper"
 tagline = "Wrapper that makes the Unwrapper work in Blender"
 maintainer = "Ultikynnys"

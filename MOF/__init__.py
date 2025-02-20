@@ -9,7 +9,7 @@ bl_info = {
     "name": "Blender MOF UV Unwrapper",
     "blender": (4, 3, 0),
     "category": "UV",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "author": "Ultikynnys",
     "description": "Wrapper that makes the Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
@@ -104,11 +104,15 @@ class DownloadMOFZipOperator(Operator):
     bl_idname = "wm.downloadmofzip"
     bl_label = "Download MinistryOfFlat Zip"
 
-    # Property for the file selector
     filepath: StringProperty(
         name="Filepath",
         description="Choose where to save the downloaded zip file (include a filename)",
         subtype='FILE_PATH'
+    )
+    filename_ext = ".zip"
+    filter_glob: StringProperty(
+        default="*.zip",
+        options={'HIDDEN'}
     )
 
     def invoke(self, context, event):
@@ -123,6 +127,8 @@ class DownloadMOFZipOperator(Operator):
             target_path = os.path.join(self.filepath, "MinistryOfFlat_Release.zip")
         else:
             target_path = self.filepath
+        # Remove any existing extension and enforce ".zip"
+        target_path = os.path.splitext(target_path)[0] + ".zip"
         try:
             urllib.request.urlretrieve(url, target_path)
             self.report({'INFO'}, "Downloaded zip to " + target_path)
