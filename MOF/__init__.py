@@ -11,7 +11,7 @@ bl_info = {
     "category": "UV",
     "version": (1, 0, 0),
     "author": "Ultikynnys",
-    "description": "MOF that makes the Unwrapper work in Blender",
+    "description": "Wrapper that makes the Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
 }
 

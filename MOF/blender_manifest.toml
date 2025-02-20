@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "ultikynnys_BlenderMOFWrapper"
 version = "1.0.0"
 name = "Blender MOF UV Unwrapper"
-tagline = "Addon for auto UV unwrapping using the powerful new Ministry of Flat program"
+tagline = "Wrapper that makes the Unwrapper work in Blender"
 maintainer = "Ultikynnys"
 type = "add-on"
 
@@ -14,6 +14,6 @@ tags = ["UV", "Unwrapping"]
 blender_version_min = "4.3.0"
 
 license = [
-  "SPDX:GPL-2.0-or-later",
+  "SPDX:GPL-3.0-or-later",
 ]
 
