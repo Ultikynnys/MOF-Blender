@@ -9,8 +9,7 @@ type = "add-on"
 
 website = "https://blendermarket.com/creators/ultikynnys"
 
-tags = ["UV", "Unwrapping"]
-
+tags = ["UV"]
 blender_version_min = "4.3.0"
 
 license = [
