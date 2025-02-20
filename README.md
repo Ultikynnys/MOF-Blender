@@ -1,6 +1,8 @@
 # MinistryOfBlender
 A Blender Addon wrapper for the [MinistryOfFlat](https://www.quelsolaar.com/ministry_of_flat/) Unwrapper
 
+# Disclaimer
+This addon does **NOT** contain the MinistryOfFlat Tool itself, it is only a wrapper that makes it work with Blender.
 
 # Better Unwrapping
 ![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/Comparison.png)
