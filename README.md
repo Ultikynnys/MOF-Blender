@@ -41,7 +41,10 @@ At higher counts the island count will negatively impact the texture density as 
 
 ## Step 3 | Unwrap and Pack
 
-![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/Step3.webp)
+<video width="640" height="360" controls>
+  <source src="https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/Pack.mp4" type="video/">
+  Your browser does not support the video tag.
+</video>
 
 ### You can support me by checking out my other addons❤️
 #### [Blender Marketplace](https://blendermarket.com/creators/ultikynnys)
