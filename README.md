@@ -44,5 +44,10 @@ At higher counts the island count will negatively impact the texture density as 
 ![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/step3a.webp)
 
 
+## Optional Step | Use Seams to fix problematic unwraps
+
+![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/step4.webp)
+
+
 ### You can support me by checking out my other addons❤️
 #### [Blender Marketplace](https://blendermarket.com/creators/ultikynnys)
