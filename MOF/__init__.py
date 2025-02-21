@@ -26,7 +26,7 @@ bl_info = {
     "name": "Blender Wrapper for MOF UV Unwrapper",
     "blender": (4, 3, 0),
     "category": "UV",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "author": "Ultikynnys",
     "description": "Wrapper that makes the MOF Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
