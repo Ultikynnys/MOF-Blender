@@ -41,7 +41,7 @@ At higher counts the island count will negatively impact the texture density as 
 
 ## Step 3 | Unwrap and Pack
 
-![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/Step3.webp)
+![](https://raw.githubusercontent.com/Ultikynnys/MinistryOfBlender/refs/heads/main/step3.webp)
 
 
 ### You can support me by checking out my other addons❤️
