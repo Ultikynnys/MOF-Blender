@@ -22,15 +22,52 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, AddonPreferences, PropertyGroup
 
+
+# Global variable to store the last target UV‐map name
+last_target_uv_map = ""
+
 bl_info = {
     "name": "Blender Wrapper for MOF UV Unwrapper",
-    "blender": (4, 3, 0),
+    "blender": (4, 4, 0),
     "category": "UV",
-    "version": (1, 0, 2),
+    "version": (1, 0, 3),
     "author": "Ultikynnys",
     "description": "Wrapper that makes the MOF Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
 }
+
+
+# -------------------------------------------------------------------
+# EnumProperty for UV map selection
+# -------------------------------------------------------------------
+
+def uv_map_items(self, context):
+    # 1) a “none” entry with a valid ID
+    items = [
+        ('NONE', 'Select UV Map…', 'No UV map selected yet'),
+    ]
+    obj = context.selected_objects[0] if context.selected_objects else None
+
+    # 2) gather any real UV names
+    uv_names = []
+    if obj and obj.type == 'MESH':
+        uv_names = [uv.name for uv in obj.data.uv_layers]
+
+    # 3) if the stored value is something other than "NONE" but it no longer exists,
+    #    show it as “Missing” — but never for "NONE" itself.
+    current = getattr(self, 'target_uv_map', 'NONE')
+    if current != 'NONE' and current not in uv_names:
+        items.append(
+            (current,
+             f"{current} (Missing)",
+             "Previously selected UV map is no longer on this mesh")
+        )
+
+    # 4) append all the real ones
+    items.extend((name, name, "") for name in uv_names)
+    return items
+
+
 
 # -------------------------------------------------------------------
 # Property Group for operator parameters
@@ -48,6 +85,7 @@ class MOFProperties(PropertyGroup):
         min=0,
         description="Set the texture resolution (in pixels) for the UV unwrap"
     )
+
     separate_hard_edges: BoolProperty(
         name="Separate Hard Edges",
         default=False,
@@ -300,9 +338,18 @@ class MOFProperties(PropertyGroup):
         description="Padding in pixels applied during UV tile scaling"
     )
 
+    target_uv_map: StringProperty(
+        name="Target UV Map",
+        description="Name of the UV map to write the unwrapped UVs into",
+        default=""
+    )
+
+
+
 # -------------------------------------------------------------------
 # Addon Preferences with version check operator
 # -------------------------------------------------------------------
+
 class MOFAddonPreferences(AddonPreferences):
     """
     Addon preferences for the Blender Wrapper for MOF UV Unwrapper.
@@ -340,10 +387,6 @@ class MOFAddonPreferences(AddonPreferences):
 class CheckMOFZipVersionOperator(Operator):
     """
     Operator that checks the version of the MinistryOfFlat zip file.
-
-    It extracts the Documentation.txt file from the provided zip archive, searches for a version string,
-    and updates the addon preferences with the found version. If errors occur or the version cannot be found,
-    appropriate messages are reported.
     """
     bl_idname = "wm.checkmofzipversion"
     bl_label = "Check MinistryOfFlat Zip Version"
@@ -385,39 +428,41 @@ class CheckMOFZipVersionOperator(Operator):
 # Operator to perform auto UV unwrapping via external tool
 # -------------------------------------------------------------------
 class AutoUVOperator(Operator):
-    """
-    Operator that performs automatic UV unwrapping using an external tool.
-
-    This operator ensures that the process starts in object mode and restores the previous mode upon completion.
-    It requires exactly one mesh object to be selected and a valid MinistryOfFlat zip file containing the
-    unwrapping executable. The operator exports the selected object, processes it with the external tool,
-    imports the resulting UVs, transfers the UV data back, and cleans up all temporary files.
-    """
     bl_idname = "object.auto_uv_operator"
     bl_label = "Auto UV Unwrap"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        # Check that we are on Windows.
-        if os.name != "nt":
+        # 1) must have exactly one mesh selected...
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if len(objs) != 1:
             return False
-        # Ensure exactly one mesh object is selected.
-        mesh_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
-        if len(mesh_objs) != 1:
+        obj = objs[0]
+
+        # 2) that mesh must have at least one UV layer
+        if not obj.data.uv_layers:
             return False
+
+        # 3) and a valid UV name must be chosen (i.e. not our 'NONE' placeholder)
+        props = context.scene.mof_properties
+        sel = context.scene.mof_properties.target_uv_map
+        valid_uvs = [uv.name for uv in obj.data.uv_layers]
+        if sel not in valid_uvs:
+            return False
+
+        # 4) finally make sure the zip contains the console executable
         prefs = context.preferences.addons[__package__].preferences
-        zip_path = bpy.path.abspath(prefs.executable_path)
-        if not prefs.executable_path or not os.path.exists(zip_path):
-            return False
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                found = any(file.lower().endswith("unwrapconsole3.exe") for file in zf.namelist() if not file.endswith("/"))
-                return found
-        except Exception:
+            with zipfile.ZipFile(bpy.path.abspath(prefs.executable_path), 'r') as zf:
+                return any(f.lower().endswith("unwrapconsole3.exe") for f in zf.namelist() if not f.endswith("/"))
+        except:
             return False
 
     def execute(self, context):
+        global last_target_uv_map
+        last_target_uv_map = context.scene.mof_properties.target_uv_map
+
         # Store the previous mode (default to 'OBJECT' if no active object)
         previous_mode = context.active_object.mode if context.active_object else 'OBJECT'
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -598,16 +643,37 @@ class AutoUVOperator(Operator):
         if imported_obj and imported_obj.type == 'MESH':
             imported_obj.name = original_obj.name + "_mof_Unwrapped"
             context.view_layer.objects.active = original_obj
-            if not original_obj.data.uv_layers:
-                original_obj.data.uv_layers.new(name="UVMap")
+            # ── 4) Rename imported UV and transfer into the target UV map ──
+            # ensure the target UV map exists on the original
+            if props.target_uv_map not in original_obj.data.uv_layers:
+                self.report({'ERROR'}, f"UV map '{props.target_uv_map}' not found on {original_obj.name}")
+                return {'CANCELLED'}
+            original_obj.data.uv_layers.active = original_obj.data.uv_layers[props.target_uv_map]
+
+            # rename the imported object's single UV layer to match
+            if imported_obj.data.uv_layers:
+                imported_obj.data.uv_layers[0].name = props.target_uv_map
+            else:
+                self.report({'ERROR'}, f"No UV maps found on imported mesh '{imported_obj.name}'")
+                bpy.data.objects.remove(imported_obj, do_unlink=True)
+                return {'CANCELLED'}
+
+            # create & apply DataTransfer modifier, targeting that named layer
             dt_mod = original_obj.modifiers.new(name="DataTransfer", type='DATA_TRANSFER')
             dt_mod.object = imported_obj
             dt_mod.use_loop_data = True
             dt_mod.data_types_loops = {'UV'}
-            dt_mod.loop_mapping = "TOPOLOGY"
+            dt_mod.loop_mapping = 'TOPOLOGY'
+            dt_mod.layers_uv_select_src = 'ALL'
+            dt_mod.layers_uv_select_dst = 'NAME'
+
+
             bpy.ops.object.mode_set(mode='OBJECT')
+            print("Applying DataTransfer modifier")
             bpy.ops.object.modifier_apply(modifier=dt_mod.name)
             bpy.data.objects.remove(imported_obj, do_unlink=True)
+
+
             
             # Scale and center the UVs based on the pixel padding parameter.
             uv_layer = original_obj.data.uv_layers.active.data
@@ -701,10 +767,19 @@ class MOFMOFPanel(Panel):
                 row = box.row()
                 row.prop(props, attr)
             box.prop(props, "pixel_padding")
-            row = box.row(align=True)
-            row.label(text="Seam Direction:")
-            for attr in ("seam_x", "seam_y", "seam_z"):
-                row.prop(props, attr, text="")
+            
+            if context.object and context.object.type == 'MESH':
+                box.prop_search(
+                    context.scene.mof_properties,
+                    "target_uv_map",
+                    context.object.data,
+                    "uv_layers",
+                    text="Target UV Map"
+                )
+            else:
+                box.prop(context.scene.mof_properties, "target_uv_map", text="Target UV Map")
+
+
             layout.operator(AutoUVOperator.bl_idname, icon='MOD_UVPROJECT')
         
 

@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ultikynnys_BlenderMOFWrapper"
-version = "1.0.2"
+version = "1.0.3"
 name = "Blender Wrapper for MOF UV Unwrapper"
 tagline = "Wrapper that makes the MOF Unwrapper work in Blender"
 maintainer = "Ultikynnys"
@@ -10,7 +10,7 @@ type = "add-on"
 website = "https://blendermarket.com/creators/ultikynnys"
 
 tags = ["UV"]
-blender_version_min = "4.3.0"
+blender_version_min = "4.4.0"
 
 license = [
   "SPDX:GPL-3.0-or-later",
