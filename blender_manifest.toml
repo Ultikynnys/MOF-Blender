@@ -1,0 +1,47 @@
+# Blender 4.4+ Extension Manifest
+# This file defines the addon metadata for the new Blender extension system
+
+schema_version = "1.0.0"
+
+# Basic addon information
+id = "ultikynnys_mof_blender"
+name = "MOF Blender"
+tagline = "Wrapper that makes the MOF UV Unwrapper work in Blender"
+version = "1.0.4"
+type = "add-on"
+
+# Compatibility
+blender_version_min = "4.4.0"
+
+# License
+license = [
+    "SPDX:GPL-3.0-or-later",
+]
+
+# Author information
+maintainer = "Ultikynnys <https://blendermarket.com/creators/ultikynnys>"
+
+# Website
+website = "https://github.com/Ultikynnys/MinistryOfBlender"
+
+# Categories and tags
+tags = [
+    "UV",
+    "Mesh",
+    "Unwrap",
+]
+
+# Permissions
+[permissions]
+files = "Import/export temporary OBJ files for UV unwrapping"
+
+# Build settings
+[build]
+paths_exclude_pattern = [
+    "__pycache__/",
+    "*.pyc",
+    ".git/",
+    ".gitignore",
+    "*.mkv",
+]
+

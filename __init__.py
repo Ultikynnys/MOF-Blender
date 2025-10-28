@@ -17,6 +17,7 @@
 import bpy, os, subprocess, zipfile, tempfile, shutil, re
 import mathutils
 import bmesh
+import tomllib
 from bpy.props import (
     StringProperty, IntProperty, FloatProperty, BoolProperty, PointerProperty, EnumProperty
 )
@@ -26,11 +27,21 @@ from bpy.types import Operator, Panel, AddonPreferences, PropertyGroup
 # Global variable to store the last target UV‐map name
 last_target_uv_map = ""
 
+# Read version from blender_manifest.toml
+def get_addon_version():
+    try:
+        manifest_path = os.path.join(os.path.dirname(__file__), "blender_manifest.toml")
+        with open(manifest_path, "rb") as f:
+            manifest = tomllib.load(f)
+            return manifest.get("version", "1.0.0")
+    except:
+        return "1.0.0"
+
 bl_info = {
     "name": "Blender Wrapper for MOF UV Unwrapper",
     "blender": (4, 4, 0),
     "category": "UV",
-    "version": (1, 0, 3),
+    "version": tuple(map(int, get_addon_version().split("."))),
     "author": "Ultikynnys",
     "description": "Wrapper that makes the MOF Unwrapper work in Blender",
     "tracker_url": "https://github.com/Ultikynnys/MinistryOfBlender",
@@ -359,11 +370,38 @@ class MOFAddonPreferences(AddonPreferences):
     """
     bl_idname = __package__
 
+    def update_executable_path(self, context):
+        """Automatically check version when path changes"""
+        zip_path = bpy.path.abspath(self.executable_path)
+        if self.executable_path and os.path.exists(zip_path):
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    doc_filename = None
+                    for name in zf.namelist():
+                        if os.path.basename(name).lower() == "documentation.txt":
+                            doc_filename = name
+                            break
+                    if doc_filename:
+                        with zf.open(doc_filename) as doc_file:
+                            content = doc_file.read().decode("utf-8")
+                            match = re.search(r"[Vv]ersion[:\s]+([\d]+\.[\d]+(?:\.[\d]+)?)", content)
+                            if match:
+                                self.version = match.group(1)
+                            else:
+                                self.version = "unknown"
+                    else:
+                        self.version = "unknown"
+            except Exception:
+                self.version = "unknown"
+        else:
+            self.version = "unknown"
+
     executable_path: StringProperty(
         name="Executable Zip Path",
         subtype='FILE_PATH',
         default="",
-        description="Path to the MinistryOfFlat zip file"
+        description="Path to the MinistryOfFlat zip file",
+        update=update_executable_path
     )
 
     version: StringProperty(
@@ -375,54 +413,10 @@ class MOFAddonPreferences(AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "executable_path")
-        row = layout.row(align=True)
-        row.label(text=f"Zip Version: {self.version}")
-        row.operator("wm.checkmofzipversion", text="Check Version")
+        layout.label(text=f"Zip Version: {self.version}")
         if not self.executable_path or not os.path.exists(bpy.path.abspath(self.executable_path)):
-            layout.label(text="Please download the MinistryOfFlat zip file from the official site.", icon='INFO')
-
-# -------------------------------------------------------------------
-# Operator to check/extract version from the zip file
-# -------------------------------------------------------------------
-class CheckMOFZipVersionOperator(Operator):
-    """
-    Operator that checks the version of the MinistryOfFlat zip file.
-    """
-    bl_idname = "wm.checkmofzipversion"
-    bl_label = "Check MinistryOfFlat Zip Version"
-
-    def execute(self, context):
-        prefs = context.preferences.addons[__package__].preferences
-        zip_path = bpy.path.abspath(prefs.executable_path)
-        if not prefs.executable_path or not os.path.exists(zip_path):
-            self.report({'ERROR'}, "Zip file not set or not found")
-            prefs.version = "unknown"
-            return {'CANCELLED'}
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                doc_filename = None
-                for name in zf.namelist():
-                    if os.path.basename(name).lower() == "documentation.txt":
-                        doc_filename = name
-                        break
-                if doc_filename:
-                    with zf.open(doc_filename) as doc_file:
-                        content = doc_file.read().decode("utf-8")
-                        match = re.search(r"[Vv]ersion[:\s]+([\d]+\.[\d]+(?:\.[\d]+)?)", content)
-                        if match:
-                            prefs.version = match.group(1)
-                        else:
-                            prefs.version = "unknown"
-                            self.report({'WARNING'}, "Version string not found in Documentation.txt")
-                else:
-                    prefs.version = "unknown"
-                    self.report({'WARNING'}, "Documentation.txt not found in zip")
-        except Exception as e:
-            prefs.version = "unknown"
-            self.report({'ERROR'}, f"Error checking zip version: {e}")
-            return {'CANCELLED'}
-        self.report({'INFO'}, f"Zip Version: {prefs.version}")
-        return {'FINISHED'}
+            layout.label(text="Please download MinistryOfFlat from:", icon='INFO')
+            layout.operator("wm.url_open", text="https://www.quelsolaar.com/ministry_of_flat/", icon='URL').url = "https://www.quelsolaar.com/ministry_of_flat/"
 
 # -------------------------------------------------------------------
 # Operator to perform auto UV unwrapping via external tool
@@ -734,7 +728,7 @@ class MOFMOFPanel(Panel):
 
     Displays general settings and buttons for executing the auto UV unwrap.
     """
-    bl_label = "MOF UV unwrapper"
+    bl_label = f"MOF UV unwrapper v{get_addon_version()}"
     bl_idname = "VIEW3D_PT_MOF_mof"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -752,7 +746,8 @@ class MOFMOFPanel(Panel):
         zip_path = bpy.path.abspath(prefs.executable_path) if prefs.executable_path else ""
         if not prefs.executable_path or not os.path.exists(zip_path):
             layout.label(text="MinistryOfFlat zip file not set", icon='ERROR')
-            layout.label(text="Please download the MinistryOfFlat zip file from the official site.", icon='INFO')
+            layout.label(text="Please download MinistryOfFlat from:", icon='INFO')
+            layout.operator("wm.url_open", text="https://www.quelsolaar.com/ministry_of_flat/", icon='URL').url = "https://www.quelsolaar.com/ministry_of_flat/"
             layout.prop(prefs, "executable_path")
         else:
             layout.label(text=f"Zip Version: {prefs.version}")
@@ -811,7 +806,6 @@ class MOFDebugPanel(Panel):
             box.prop(props, attr)
 
 classes = (
-    CheckMOFZipVersionOperator,
     MOFProperties,
     MOFAddonPreferences,
     AutoUVOperator,
