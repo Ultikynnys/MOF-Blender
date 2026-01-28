@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.git*
+.DS_Store
+*.zip
+.vscode/
+*.mkv
+assets/
