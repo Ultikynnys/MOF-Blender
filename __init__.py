@@ -424,6 +424,7 @@ class MOFAddonPreferences(AddonPreferences):
 class AutoUVOperator(Operator):
     bl_idname = "object.auto_uv_operator"
     bl_label = "Auto UV Unwrap"
+    bl_description = "Unwraps the selected mesh using the Ministry of Flat algorithm"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -507,16 +508,23 @@ class AutoUVOperator(Operator):
             return {"CANCELLED"}
 
         # Create a temporary copy of the object for processing.
-        orig_matrix = original_obj.matrix_world.copy()
-        temp_name = original_obj.name + "_temp"
-        if temp_name in bpy.data.objects:
-            bpy.data.objects.remove(bpy.data.objects[temp_name], do_unlink=True)
+        # Use timestamp-based unique name to avoid conflicts when processing multiple objects
+        import time
+        # orig_matrix = original_obj.matrix_world.copy()
+        temp_name = f"{original_obj.name}_mof_temp_{int(time.time() * 1000)}"
+        # Clean up any existing temp objects with similar prefix (defensive cleanup)
+        for obj_name in list(bpy.data.objects.keys()):
+            if obj_name.startswith(original_obj.name + "_mof_temp_"):
+                try:
+                    bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
+                except:
+                    pass
         temp_obj = original_obj.copy()
         temp_obj.data = original_obj.data.copy()
         temp_obj.name = temp_name
         context.collection.objects.link(temp_obj)
         # Reset matrices to Identity.
-        original_obj.matrix_world = mathutils.Matrix.Identity(4)
+        # original_obj.matrix_world = mathutils.Matrix.Identity(4)
         temp_obj.matrix_world = mathutils.Matrix.Identity(4)
 
         props = context.scene.mof_properties
@@ -561,10 +569,19 @@ class AutoUVOperator(Operator):
             )
         except Exception as e:
             self.report({'ERROR'}, f"Export failed for {original_obj.name}: {e}")
-            bpy.app.timers.register(lambda: remove_temp(temp_obj), first_interval=1.0)
+            # Clean up temp object synchronously to avoid issues with multiple object processing
+            try:
+                bpy.data.objects.remove(temp_obj, do_unlink=True)
+            except:
+                pass
             return {"CANCELLED"}
 
-        bpy.app.timers.register(lambda: remove_temp(temp_obj), first_interval=1.0)
+        # Clean up temp object synchronously (not via timer) to ensure it's gone before next object
+        # This is critical for sequential multi-object processing
+        try:
+            bpy.data.objects.remove(temp_obj, do_unlink=True)
+        except:
+            pass
 
         # Build the command list with parameters.
         p = context.scene.mof_properties
@@ -635,14 +652,34 @@ class AutoUVOperator(Operator):
         # Transfer UVs from the imported object to the original object.
         imported_obj = context.active_object
         if imported_obj and imported_obj.type == 'MESH':
-            imported_obj.name = original_obj.name + "_mof_Unwrapped"
-            context.view_layer.objects.active = original_obj
+            # Use unique name with timestamp to avoid conflicts
+            import time
+            imported_obj.name = f"{original_obj.name}_mof_imported_{int(time.time() * 1000)}"
+            
+            # ── Multi-User Support ──
+            # Identify all objects sharing this mesh (before we modify anything)
+            mesh_users = [o for o in bpy.data.objects if o.data == original_obj.data]
+
+            # Create a working duplicate to apply UVs to (The 'Duplicate Mesh')
+            target_obj = original_obj.copy()
+            target_obj.data = original_obj.data.copy()
+            target_obj.name = f"{original_obj.name}_MOF_Target"
+            context.collection.objects.link(target_obj)
+            target_obj.matrix_world = mathutils.Matrix.Identity(4) # Ensure Identity aligns with imported data
+
+            # Ensure proper selection state for modifier operations on TARGET
+            bpy.ops.object.select_all(action='DESELECT')
+            target_obj.select_set(True)
+            context.view_layer.objects.active = target_obj
+            
             # ── 4) Rename imported UV and transfer into the target UV map ──
-            # ensure the target UV map exists on the original
-            if props.target_uv_map not in original_obj.data.uv_layers:
-                self.report({'ERROR'}, f"UV map '{props.target_uv_map}' not found on {original_obj.name}")
+            # ensure the target UV map exists on the target
+            if props.target_uv_map not in target_obj.data.uv_layers:
+                self.report({'ERROR'}, f"UV map '{props.target_uv_map}' not found on target mesh")
+                bpy.data.objects.remove(imported_obj, do_unlink=True)
+                bpy.data.objects.remove(target_obj, do_unlink=True)
                 return {'CANCELLED'}
-            original_obj.data.uv_layers.active = original_obj.data.uv_layers[props.target_uv_map]
+            target_obj.data.uv_layers.active = target_obj.data.uv_layers[props.target_uv_map]
 
             # rename the imported object's single UV layer to match
             if imported_obj.data.uv_layers:
@@ -650,10 +687,11 @@ class AutoUVOperator(Operator):
             else:
                 self.report({'ERROR'}, f"No UV maps found on imported mesh '{imported_obj.name}'")
                 bpy.data.objects.remove(imported_obj, do_unlink=True)
+                bpy.data.objects.remove(target_obj, do_unlink=True)
                 return {'CANCELLED'}
 
             # create & apply DataTransfer modifier, targeting that named layer
-            dt_mod = original_obj.modifiers.new(name="DataTransfer", type='DATA_TRANSFER')
+            dt_mod = target_obj.modifiers.new(name="DataTransfer", type='DATA_TRANSFER')
             dt_mod.object = imported_obj
             dt_mod.use_loop_data = True
             dt_mod.data_types_loops = {'UV'}
@@ -661,16 +699,17 @@ class AutoUVOperator(Operator):
             dt_mod.layers_uv_select_src = 'ALL'
             dt_mod.layers_uv_select_dst = 'NAME'
 
-
+            # Ensure object mode and proper selection before applying modifier
             bpy.ops.object.mode_set(mode='OBJECT')
-            print("Applying DataTransfer modifier")
+            
+            # Apply the modifier
             bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+            
+            # Clean up imported object immediately
             bpy.data.objects.remove(imported_obj, do_unlink=True)
-
-
             
             # Scale and center the UVs based on the pixel padding parameter.
-            uv_layer = original_obj.data.uv_layers.active.data
+            uv_layer = target_obj.data.uv_layers.active.data
             min_u, min_v = float('inf'), float('inf')
             max_u, max_v = float('-inf'), float('-inf')
             for loop in uv_layer:
@@ -686,11 +725,27 @@ class AutoUVOperator(Operator):
                 for loop in uv_layer:
                     loop.uv.x = padding + ((loop.uv.x - min_u) / range_u) * (1 - 2 * padding)
                     loop.uv.y = padding + ((loop.uv.y - min_v) / range_v) * (1 - 2 * padding)
+                    
+            # ── Final Assignment ──
+            # Assign the new mesh to all users
+            new_mesh = target_obj.data
+            # new_mesh.name = original_obj.data.name # Keep unique name to distinguish?
+            
+            for user in mesh_users:
+                user.data = new_mesh
+            
+            # Cleanup target wrapper logic
+            bpy.data.objects.remove(target_obj, do_unlink=True)
+            
+            # Restore selection of original
+            original_obj.select_set(True)
+            context.view_layer.objects.active = original_obj
+
         else:
             self.report({'WARNING'}, f"No valid imported mesh found for UV processing on {original_obj.name}")
         
         # Restore the original object's transform.
-        original_obj.matrix_world = orig_matrix
+        # original_obj.matrix_world = orig_matrix
 
         # Clean up temporary files.
         for fp in (in_path, out_path):
