@@ -57,21 +57,33 @@ def uv_map_items(self, context):
     items = [
         ('NONE', 'Select UV Map…', 'No UV map selected yet'),
     ]
-    obj = context.selected_objects[0] if context.selected_objects else None
+    
+    # Gather only mesh objects from selection
+    selected_meshes = [obj for obj in context.selected_objects if obj.type == 'MESH']
+    
+    if not selected_meshes:
+        return items
 
-    # 2) gather any real UV names
-    uv_names = []
-    if obj and obj.type == 'MESH':
-        uv_names = [uv.name for uv in obj.data.uv_layers]
+    # 2) intersect UV map names from all mesh objects
+    # Initialize with the UV map names from the first mesh object
+    common_uv_names = {uv.name for uv in selected_meshes[0].data.uv_layers}
+    
+    # Intersect with the names from all other selected meshes
+    for obj in selected_meshes[1:]:
+        obj_uv_names = {uv.name for uv in obj.data.uv_layers}
+        common_uv_names.intersection_update(obj_uv_names)
+    
+    # Convert back to sorted list
+    uv_names = sorted(list(common_uv_names))
 
-    # 3) if the stored value is something other than "NONE" but it no longer exists,
+    # 3) if the stored value is something other than "NONE" but it no longer exists on all objects,
     #    show it as “Missing” — but never for "NONE" itself.
     current = getattr(self, 'target_uv_map', 'NONE')
     if current != 'NONE' and current not in uv_names:
         items.append(
             (current,
              f"{current} (Missing)",
-             "Previously selected UV map is no longer on this mesh")
+             "Previously selected UV map is no longer on all selected meshes")
         )
 
     # 4) append all the real ones
@@ -435,30 +447,42 @@ class AutoUVOperator(Operator):
             cls.poll_message_set("MinistryOfFlat zip path not set in addon preferences")
             return False
             
-        # 1) must have exactly one mesh selected...
+        # 1) must have at least one mesh selected...
         objs = [o for o in context.selected_objects if o.type == 'MESH']
-        if len(objs) != 1:
-            cls.poll_message_set("Exactly one mesh object must be selected")
+        if not objs:
+            cls.poll_message_set("At least one mesh object must be selected")
             return False
-        obj = objs[0]
-
-        # 2) that mesh must have at least one UV layer
-        if not obj.data.uv_layers:
-            cls.poll_message_set("Selected mesh has no UV layers")
+        
+        # 2) all selected meshes must have at least one UV layer
+        for o in objs:
+            if not o.data.uv_layers:
+                cls.poll_message_set(f"Object '{o.name}' has no UV layers")
+                return False
+        
+        # 3) intersect UV map names from all mesh objects
+        common_uv_names = {uv.name for uv in objs[0].data.uv_layers}
+        for o in objs[1:]:
+            common_uv_names.intersection_update({uv.name for uv in o.data.uv_layers})
+        
+        if not common_uv_names:
+            cls.poll_message_set("No common UV maps found among selected objects")
             return False
 
-        # 3) and a valid UV name must be chosen (i.e. not our 'NONE' placeholder)
+        # 4) and a valid UV name must be chosen (i.e. not our 'NONE' placeholder)
         if not hasattr(context.scene, 'mof_properties'):
             cls.poll_message_set("MOF properties not found in scene")
             return False
             
         sel = context.scene.mof_properties.target_uv_map
-        valid_uvs = [uv.name for uv in obj.data.uv_layers]
-        if sel not in valid_uvs:
-            cls.poll_message_set(f"Target UV map '{sel}' not found on selected mesh")
+        if sel == 'NONE':
+            cls.poll_message_set("Please select a target UV map")
             return False
 
-        # 4) finally make sure the zip contains the console executable
+        if sel not in common_uv_names:
+            cls.poll_message_set(f"Target UV map '{sel}' not found on all selected meshes")
+            return False
+
+        # 5) finally make sure the zip contains the console executable
         zip_path = bpy.path.abspath(prefs.executable_path)
         if not os.path.exists(zip_path):
             cls.poll_message_set(f"MinistryOfFlat zip file not found at: {zip_path}")
@@ -482,12 +506,11 @@ class AutoUVOperator(Operator):
         previous_mode = context.active_object.mode if context.active_object else 'OBJECT'
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        # Process only if exactly one mesh object is selected.
+        # Process all selected mesh objects.
         selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
-        if len(selected_objs) != 1:
-            self.report({'ERROR'}, "Please select exactly one mesh object")
+        if not selected_objs:
+            self.report({'ERROR'}, "No mesh objects selected")
             return {"CANCELLED"}
-        original_obj = selected_objs[0]
 
         # Extract the external tool once from the MinistryOfFlat zip file.
         prefs = context.preferences.addons[__package__].preferences
@@ -502,6 +525,7 @@ class AutoUVOperator(Operator):
         except Exception as e:
             self.report({'ERROR'}, f"Failed to extract zip file: {e}")
             return {"CANCELLED"}
+        
         exe = None
         for root, dirs, files in os.walk(extract_path):
             for file in files:
@@ -519,6 +543,7 @@ class AutoUVOperator(Operator):
                         break
             if exe:
                 break
+        
         if not exe:
             self.report({'ERROR'}, "No executable found in the zip file")
             try:
@@ -527,263 +552,221 @@ class AutoUVOperator(Operator):
                 pass
             return {"CANCELLED"}
 
-        # Create a temporary copy of the object for processing.
-        # Use timestamp-based unique name to avoid conflicts when processing multiple objects
-        import time
-        # orig_matrix = original_obj.matrix_world.copy()
-        temp_name = f"{original_obj.name}_mof_temp_{int(time.time() * 1000)}"
-        # Clean up any existing temp objects with similar prefix (defensive cleanup)
-        for obj_name in list(bpy.data.objects.keys()):
-            if obj_name.startswith(original_obj.name + "_mof_temp_"):
-                try:
-                    bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
-                except:
-                    pass
-        temp_obj = original_obj.copy()
-        temp_obj.data = original_obj.data.copy()
-        temp_obj.name = temp_name
-        context.collection.objects.link(temp_obj)
-        # Reset matrices to Identity.
-        # original_obj.matrix_world = mathutils.Matrix.Identity(4)
-        temp_obj.matrix_world = mathutils.Matrix.Identity(4)
+        # Group objects by their mesh data to avoid redundant processing
+        mesh_to_objs = {}
+        for obj in selected_objs:
+            if obj.data not in mesh_to_objs:
+                mesh_to_objs[obj.data] = []
+            mesh_to_objs[obj.data].append(obj)
 
         props = context.scene.mof_properties
-
-        # If there are seam edges, split them according to the chosen method.
-        if any(edge.use_seam for edge in temp_obj.data.edges):
-            bpy.ops.object.mode_set(mode='EDIT')
-            bpy.context.view_layer.update()  # Force update of the view layer
-            bm = bmesh.from_edit_mesh(temp_obj.data)
-            # If "Separate Marked Edges" is enabled, split all edges marked as seam.
-            if props.separate_marked_edges:
-                marked_edges = [edge for edge in bm.edges if edge.seam]
-                if marked_edges:
-                    bmesh.ops.split_edges(bm, edges=marked_edges)
-                    bmesh.update_edit_mesh(temp_obj.data)
-            # Else if "Separate Hard Edges" is enabled, split only those seam edges that are sharp.
-            elif props.separate_hard_edges:
-                hard_edges = [edge for edge in bm.edges if edge.seam and not edge.smooth]
-                if hard_edges:
-                    bmesh.ops.split_edges(bm, edges=hard_edges)
-                    bmesh.update_edit_mesh(temp_obj.data)
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-        # Deselect all and select only the temporary object.
-        for obj in context.selected_objects:
-            obj.select_set(False)
-        temp_obj.select_set(True)
-        context.view_layer.objects.active = temp_obj
-
-        # Export the temporary object as OBJ.
         temp_dir = bpy.app.tempdir
-        name_safe = temp_obj.name.replace(" ", "_")
-        in_path = os.path.join(temp_dir, f"{name_safe}.obj")
-        out_path = os.path.join(temp_dir, f"{name_safe}_unwrapped.obj")
-        try:
-            bpy.ops.wm.obj_export(
-                filepath=in_path,
-                export_selected_objects=True,
-                export_materials=False,
-                forward_axis='Y',
-                up_axis='Z'
-            )
-        except Exception as e:
-            self.report({'ERROR'}, f"Export failed for {original_obj.name}: {e}")
-            # Clean up temp object synchronously to avoid issues with multiple object processing
-            try:
-                bpy.data.objects.remove(temp_obj, do_unlink=True)
-            except:
-                pass
-            return {"CANCELLED"}
 
-        # Clean up temp object synchronously (not via timer) to ensure it's gone before next object
-        # This is critical for sequential multi-object processing
-        try:
-            bpy.data.objects.remove(temp_obj, do_unlink=True)
-        except:
-            pass
-
-        # Build the command list with parameters.
-        p = context.scene.mof_properties
-        cmd = [exe, in_path, out_path]
-        params = [
-            ("-RESOLUTION", str(p.resolution)),
-            ("-SEPARATE", "TRUE" if p.separate_hard_edges else "FALSE"),
-            ("-ASPECT", str(p.aspect)),
-            ("-NORMALS", "TRUE" if p.use_normals else "FALSE"),
-            ("-UDIMS", str(p.udims)),
-            ("-OVERLAP", "TRUE" if p.overlap_identical else "FALSE"),
-            ("-MIRROR", "TRUE" if p.overlap_mirrored else "FALSE"),
-            ("-WORLDSCALE", "TRUE" if p.world_scale else "FALSE"),
-            ("-DENSITY", str(p.texture_density)),
-            ("-CENTER", str(p.seam_x), str(p.seam_y), str(p.seam_z)),
-            ("-SUPRESS", "TRUE" if p.suppress_validation else "FALSE"),
-            ("-QUAD", "TRUE" if p.quads else "FALSE"),
-            ("-WELD", "FALSE"),  # Must be false always otherwise we can't use seams
-            ("-FLAT", "TRUE" if p.flat_soft_surface else "FALSE"),
-            ("-CONE", "TRUE" if p.cones else "FALSE"),
-            ("-CONERATIO", str(p.cone_ratio)),
-            ("-GRIDS", "TRUE" if p.grids else "FALSE"),
-            ("-STRIP", "TRUE" if p.strips else "FALSE"),
-            ("-PATCH", "TRUE" if p.patches else "FALSE"),
-            ("-PLANES", "TRUE" if p.planes else "FALSE"),
-            ("-FLATT", str(p.flatness)),
-            ("-MERGE", "TRUE" if p.merge else "FALSE"),
-            ("-MERGELIMIT", str(p.merge_limit)),
-            ("-PRESMOOTH", "TRUE" if p.pre_smooth else "FALSE"),
-            ("-SOFTUNFOLD", "TRUE" if p.soft_unfold else "FALSE"),
-            ("-TUBES", "TRUE" if p.tubes else "FALSE"),
-            ("-JUNCTIONSDEBUG", "TRUE" if p.junctions else "FALSE"),
-            ("-EXTRADEBUG", "TRUE" if p.extra_debug else "FALSE"),
-            ("-ABF", "TRUE" if p.angle_based_flattening else "FALSE"),
-            ("-SMOOTH", "TRUE" if p.smooth else "FALSE"),
-            ("-REPAIRSMOOTH", "TRUE" if p.repair_smooth else "FALSE"),
-            ("-REPAIR", "TRUE" if p.repair else "FALSE"),
-            ("-SQUARE", "TRUE" if p.squares else "FALSE"),
-            ("-RELAX", "TRUE" if p.relax else "FALSE"),
-            ("-RELAX_ITERATIONS", str(p.relax_iterations)),
-            ("-EXPAND", str(p.expand)),
-            ("-CUTDEBUG", "TRUE" if p.cut else "FALSE"),
-            ("-STRETCH", "TRUE" if p.stretch else "FALSE"),
-            ("-MATCH", "TRUE" if p.match else "FALSE"),
-            ("-PACKING", "TRUE" if p.packing else "FALSE"),
-            ("-RASTERIZATION", str(p.rasterization)),
-            ("-PACKING_ITERATIONS", str(p.packing_iterations)),
-            ("-SCALETOFIT", str(p.scale_to_fit)),
-            ("-VALIDATE", "TRUE" if p.validate else "FALSE"),
-        ]
-        for tup in params:
-            cmd.extend(tup)
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
-                    self.report({'ERROR'}, f"External tool failed on {original_obj.name} with exit code {result.returncode}")
-                    return {"CANCELLED"}
-        except Exception as e:
-            self.report({'ERROR'}, f"Error running tool on {original_obj.name}: {e}")
-            return {"CANCELLED"}
-        try:
-            bpy.ops.wm.obj_import(filepath=out_path, forward_axis='Y', up_axis='Z')
-        except Exception as e:
-            self.report({'ERROR'}, f"Import failed for {original_obj.name}: {e}")
-            return {"CANCELLED"}
-
-        # Transfer UVs from the imported object to the original object.
-        imported_obj = context.active_object
-        if imported_obj and imported_obj.type == 'MESH':
-            # Use unique name with timestamp to avoid conflicts
+        for mesh, mesh_users in mesh_to_objs.items():
+            # Use the first object as a representative for this mesh
+            original_obj = mesh_users[0]
+            
+            # Create a temporary copy of the object for processing.
             import time
-            imported_obj.name = f"{original_obj.name}_mof_imported_{int(time.time() * 1000)}"
+            temp_name = f"{original_obj.name}_mof_temp_{int(time.time() * 1000)}"
             
-            # ── Multi-User Support ──
-            # Identify all objects sharing this mesh (before we modify anything)
-            mesh_users = [o for o in bpy.data.objects if o.data == original_obj.data]
+            temp_obj = original_obj.copy()
+            temp_obj.data = original_obj.data.copy() # Create a unique copy for processing
+            temp_obj.name = temp_name
+            context.collection.objects.link(temp_obj)
+            temp_obj.matrix_world = mathutils.Matrix.Identity(4)
 
-            # Create a working duplicate to apply UVs to (The 'Duplicate Mesh')
-            target_obj = original_obj.copy()
-            target_obj.data = original_obj.data.copy()
-            target_obj.name = f"{original_obj.name}_MOF_Target"
-            context.collection.objects.link(target_obj)
-            target_obj.matrix_world = mathutils.Matrix.Identity(4) # Ensure Identity aligns with imported data
+            # If there are seam edges, split them according to the chosen method.
+            if any(edge.use_seam for edge in temp_obj.data.edges):
+                bpy.ops.object.mode_set(mode='EDIT')
+                bpy.context.view_layer.update()
+                bm = bmesh.from_edit_mesh(temp_obj.data)
+                if props.separate_marked_edges:
+                    marked_edges = [edge for edge in bm.edges if edge.seam]
+                    if marked_edges:
+                        bmesh.ops.split_edges(bm, edges=marked_edges)
+                        bmesh.update_edit_mesh(temp_obj.data)
+                elif props.separate_hard_edges:
+                    hard_edges = [edge for edge in bm.edges if edge.seam and not edge.smooth]
+                    if hard_edges:
+                        bmesh.ops.split_edges(bm, edges=hard_edges)
+                        bmesh.update_edit_mesh(temp_obj.data)
+                bpy.ops.object.mode_set(mode='OBJECT')
 
-            # Ensure proper selection state for modifier operations on TARGET
-            bpy.ops.object.select_all(action='DESELECT')
-            target_obj.select_set(True)
-            context.view_layer.objects.active = target_obj
+            # Deselect all and select only the temporary object.
+            for obj in context.selected_objects:
+                obj.select_set(False)
+            temp_obj.select_set(True)
+            context.view_layer.objects.active = temp_obj
+
+            # Export the temporary object as OBJ.
+            name_safe = temp_obj.name.replace(" ", "_")
+            in_path = os.path.join(temp_dir, f"{name_safe}.obj")
+            out_path = os.path.join(temp_dir, f"{name_safe}_unwrapped.obj")
             
-            # ── 4) Rename imported UV and transfer into the target UV map ──
-            # ensure the target UV map exists on the target
-            if props.target_uv_map not in target_obj.data.uv_layers:
-                self.report({'ERROR'}, f"UV map '{props.target_uv_map}' not found on target mesh")
+            try:
+                bpy.ops.wm.obj_export(
+                    filepath=in_path,
+                    export_selected_objects=True,
+                    export_materials=False,
+                    forward_axis='Y',
+                    up_axis='Z'
+                )
+            except Exception as e:
+                self.report({'ERROR'}, f"Export failed for {original_obj.name}: {e}")
+                bpy.data.objects.remove(temp_obj, do_unlink=True)
+                continue
+
+            # Clean up temp object
+            bpy.data.objects.remove(temp_obj, do_unlink=True)
+
+            # Build command
+            cmd = [exe, in_path, out_path]
+            params = [
+                ("-RESOLUTION", str(props.resolution)),
+                ("-SEPARATE", "TRUE" if props.separate_hard_edges else "FALSE"),
+                ("-ASPECT", str(props.aspect)),
+                ("-NORMALS", "TRUE" if props.use_normals else "FALSE"),
+                ("-UDIMS", str(props.udims)),
+                ("-OVERLAP", "TRUE" if props.overlap_identical else "FALSE"),
+                ("-MIRROR", "TRUE" if props.overlap_mirrored else "FALSE"),
+                ("-WORLDSCALE", "TRUE" if props.world_scale else "FALSE"),
+                ("-DENSITY", str(props.texture_density)),
+                ("-CENTER", str(props.seam_x), str(props.seam_y), str(props.seam_z)),
+                ("-SUPRESS", "TRUE" if props.suppress_validation else "FALSE"),
+                ("-QUAD", "TRUE" if props.quads else "FALSE"),
+                ("-WELD", "FALSE"),
+                ("-FLAT", "TRUE" if props.flat_soft_surface else "FALSE"),
+                ("-CONE", "TRUE" if props.cones else "FALSE"),
+                ("-CONERATIO", str(props.cone_ratio)),
+                ("-GRIDS", "TRUE" if props.grids else "FALSE"),
+                ("-STRIP", "TRUE" if props.strips else "FALSE"),
+                ("-PATCH", "TRUE" if props.patches else "FALSE"),
+                ("-PLANES", "TRUE" if props.planes else "FALSE"),
+                ("-FLATT", str(props.flatness)),
+                ("-MERGE", "TRUE" if props.merge else "FALSE"),
+                ("-MERGELIMIT", str(props.merge_limit)),
+                ("-PRESMOOTH", "TRUE" if props.pre_smooth else "FALSE"),
+                ("-SOFTUNFOLD", "TRUE" if props.soft_unfold else "FALSE"),
+                ("-TUBES", "TRUE" if props.tubes else "FALSE"),
+                ("-JUNCTIONSDEBUG", "TRUE" if props.junctions else "FALSE"),
+                ("-EXTRADEBUG", "TRUE" if props.extra_debug else "FALSE"),
+                ("-ABF", "TRUE" if props.angle_based_flattening else "FALSE"),
+                ("-SMOOTH", "TRUE" if props.smooth else "FALSE"),
+                ("-REPAIRSMOOTH", "TRUE" if props.repair_smooth else "FALSE"),
+                ("-REPAIR", "TRUE" if props.repair else "FALSE"),
+                ("-SQUARE", "TRUE" if props.squares else "FALSE"),
+                ("-RELAX", "TRUE" if props.relax else "FALSE"),
+                ("-RELAX_ITERATIONS", str(props.relax_iterations)),
+                ("-EXPAND", str(props.expand)),
+                ("-CUTDEBUG", "TRUE" if props.cut else "FALSE"),
+                ("-STRETCH", "TRUE" if props.stretch else "FALSE"),
+                ("-MATCH", "TRUE" if props.match else "FALSE"),
+                ("-PACKING", "TRUE" if props.packing else "FALSE"),
+                ("-RASTERIZATION", str(props.rasterization)),
+                ("-PACKING_ITERATIONS", str(props.packing_iterations)),
+                ("-SCALETOFIT", str(props.scale_to_fit)),
+                ("-VALIDATE", "TRUE" if props.validate else "FALSE"),
+            ]
+            for tup in params:
+                cmd.extend(tup)
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+                        self.report({'ERROR'}, f"External tool failed on {original_obj.name}")
+                        continue
+            except Exception as e:
+                self.report({'ERROR'}, f"Error running tool on {original_obj.name}: {e}")
+                continue
+
+            try:
+                bpy.ops.wm.obj_import(filepath=out_path, forward_axis='Y', up_axis='Z')
+            except Exception as e:
+                self.report({'ERROR'}, f"Import failed for {original_obj.name}: {e}")
+                continue
+
+            imported_obj = context.active_object
+            if imported_obj and imported_obj.type == 'MESH':
+                imported_obj.name = f"{original_obj.name}_mof_imported_{int(time.time() * 1000)}"
+                
+                # Target for UV transfer
+                target_obj = original_obj.copy()
+                target_obj.data = original_obj.data.copy()
+                target_obj.name = f"{original_obj.name}_MOF_Target"
+                context.collection.objects.link(target_obj)
+                target_obj.matrix_world = mathutils.Matrix.Identity(4)
+
+                bpy.ops.object.select_all(action='DESELECT')
+                target_obj.select_set(True)
+                context.view_layer.objects.active = target_obj
+
+                if props.target_uv_map not in target_obj.data.uv_layers:
+                    self.report({'WARNING'}, f"UV map '{props.target_uv_map}' not found on {original_obj.name}, skipping")
+                    bpy.data.objects.remove(imported_obj, do_unlink=True)
+                    bpy.data.objects.remove(target_obj, do_unlink=True)
+                    continue
+
+                target_obj.data.uv_layers.active = target_obj.data.uv_layers[props.target_uv_map]
+                if imported_obj.data.uv_layers:
+                    imported_obj.data.uv_layers[0].name = props.target_uv_map
+                
+                dt_mod = target_obj.modifiers.new(name="DataTransfer", type='DATA_TRANSFER')
+                dt_mod.object = imported_obj
+                dt_mod.use_loop_data = True
+                dt_mod.data_types_loops = {'UV'}
+                dt_mod.loop_mapping = 'TOPOLOGY'
+                dt_mod.layers_uv_select_src = 'ALL'
+                dt_mod.layers_uv_select_dst = 'NAME'
+
+                bpy.ops.object.modifier_apply(modifier=dt_mod.name)
                 bpy.data.objects.remove(imported_obj, do_unlink=True)
+
+                # Scaling/Padding
+                uv_layer = target_obj.data.uv_layers.active.data
+                coords = [loop.uv for loop in uv_layer]
+                if coords:
+                    min_u = min(c.x for c in coords)
+                    max_u = max(c.x for c in coords)
+                    min_v = min(c.y for c in coords)
+                    max_v = max(c.y for c in coords)
+                    range_u = max_u - min_u
+                    range_v = max_v - min_v
+                    if range_u > 0 and range_v > 0:
+                        padding = props.pixel_padding / props.resolution
+                        for uv in coords:
+                            uv.x = padding + ((uv.x - min_u) / range_u) * (1 - 2 * padding)
+                            uv.y = padding + ((uv.y - min_v) / range_v) * (1 - 2 * padding)
+
+                # Update all users of this mesh
+                new_mesh_data = target_obj.data
+                for user in mesh_users:
+                    user.data = new_mesh_data
+                
                 bpy.data.objects.remove(target_obj, do_unlink=True)
-                return {'CANCELLED'}
-            target_obj.data.uv_layers.active = target_obj.data.uv_layers[props.target_uv_map]
 
-            # rename the imported object's single UV layer to match
-            if imported_obj.data.uv_layers:
-                imported_obj.data.uv_layers[0].name = props.target_uv_map
-            else:
-                self.report({'ERROR'}, f"No UV maps found on imported mesh '{imported_obj.name}'")
-                bpy.data.objects.remove(imported_obj, do_unlink=True)
-                bpy.data.objects.remove(target_obj, do_unlink=True)
-                return {'CANCELLED'}
+            # Cleanup files
+            for fp in (in_path, out_path):
+                if os.path.exists(fp):
+                    try: os.remove(fp)
+                    except: pass
 
-            # create & apply DataTransfer modifier, targeting that named layer
-            dt_mod = target_obj.modifiers.new(name="DataTransfer", type='DATA_TRANSFER')
-            dt_mod.object = imported_obj
-            dt_mod.use_loop_data = True
-            dt_mod.data_types_loops = {'UV'}
-            dt_mod.loop_mapping = 'TOPOLOGY'
-            dt_mod.layers_uv_select_src = 'ALL'
-            dt_mod.layers_uv_select_dst = 'NAME'
-
-            # Ensure object mode and proper selection before applying modifier
-            bpy.ops.object.mode_set(mode='OBJECT')
-            
-            # Apply the modifier
-            bpy.ops.object.modifier_apply(modifier=dt_mod.name)
-            
-            # Clean up imported object immediately
-            bpy.data.objects.remove(imported_obj, do_unlink=True)
-            
-            # Scale and center the UVs based on the pixel padding parameter.
-            uv_layer = target_obj.data.uv_layers.active.data
-            min_u, min_v = float('inf'), float('inf')
-            max_u, max_v = float('-inf'), float('-inf')
-            for loop in uv_layer:
-                u, v = loop.uv.x, loop.uv.y
-                if u < min_u: min_u = u
-                if v < min_v: min_v = v
-                if u > max_u: max_u = u
-                if v > max_v: max_v = v
-            range_u = max_u - min_u
-            range_v = max_v - min_v
-            if range_u > 0 and range_v > 0:
-                padding = p.pixel_padding / p.resolution
-                for loop in uv_layer:
-                    loop.uv.x = padding + ((loop.uv.x - min_u) / range_u) * (1 - 2 * padding)
-                    loop.uv.y = padding + ((loop.uv.y - min_v) / range_v) * (1 - 2 * padding)
-                    
-            # ── Final Assignment ──
-            # Assign the new mesh to all users
-            new_mesh = target_obj.data
-            # new_mesh.name = original_obj.data.name # Keep unique name to distinguish?
-            
-            for user in mesh_users:
-                user.data = new_mesh
-            
-            # Cleanup target wrapper logic
-            bpy.data.objects.remove(target_obj, do_unlink=True)
-            
-            # Restore selection of original
-            original_obj.select_set(True)
-            context.view_layer.objects.active = original_obj
-
-        else:
-            self.report({'WARNING'}, f"No valid imported mesh found for UV processing on {original_obj.name}")
-        
-        # Restore the original object's transform.
-        # original_obj.matrix_world = orig_matrix
-
-        # Clean up temporary files.
-        for fp in (in_path, out_path):
-            if os.path.exists(fp):
-                try:
-                    os.remove(fp)
-                except Exception:
-                    pass
-
-        # Clean up extracted executable.
+        # End of loop cleanup
         try:
             if os.path.exists(extract_path):
                 shutil.rmtree(extract_path)
-        except Exception:
+        except:
             pass
 
-        self.report({'INFO'}, "UV Unwrapping complete for the selected mesh object")
-        # Restore the previous mode before finishing.
+        # Restore original selection
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in selected_objs:
+            obj.select_set(True)
+        if selected_objs:
+            context.view_layer.objects.active = selected_objs[0]
+
+        self.report({'INFO'}, f"MOF Unwrap complete for {len(selected_objs)} objects")
         bpy.ops.object.mode_set(mode=previous_mode)
         return {"FINISHED"}
 
