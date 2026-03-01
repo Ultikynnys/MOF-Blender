@@ -429,29 +429,49 @@ class AutoUVOperator(Operator):
 
     @classmethod
     def poll(cls, context):
+        # 0) check for a valid executable path
+        prefs = context.preferences.addons[__package__].preferences
+        if not prefs.executable_path:
+            cls.poll_message_set("MinistryOfFlat zip path not set in addon preferences")
+            return False
+            
         # 1) must have exactly one mesh selected...
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if len(objs) != 1:
+            cls.poll_message_set("Exactly one mesh object must be selected")
             return False
         obj = objs[0]
 
         # 2) that mesh must have at least one UV layer
         if not obj.data.uv_layers:
+            cls.poll_message_set("Selected mesh has no UV layers")
             return False
 
         # 3) and a valid UV name must be chosen (i.e. not our 'NONE' placeholder)
-        props = context.scene.mof_properties
+        if not hasattr(context.scene, 'mof_properties'):
+            cls.poll_message_set("MOF properties not found in scene")
+            return False
+            
         sel = context.scene.mof_properties.target_uv_map
         valid_uvs = [uv.name for uv in obj.data.uv_layers]
         if sel not in valid_uvs:
+            cls.poll_message_set(f"Target UV map '{sel}' not found on selected mesh")
             return False
 
         # 4) finally make sure the zip contains the console executable
-        prefs = context.preferences.addons[__package__].preferences
+        zip_path = bpy.path.abspath(prefs.executable_path)
+        if not os.path.exists(zip_path):
+            cls.poll_message_set(f"MinistryOfFlat zip file not found at: {zip_path}")
+            return False
+            
         try:
-            with zipfile.ZipFile(bpy.path.abspath(prefs.executable_path), 'r') as zf:
-                return any(f.lower().endswith("unwrapconsole3.exe") for f in zf.namelist() if not f.endswith("/"))
-        except:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                if not any(f.lower().endswith("unwrapconsole3.exe") for f in zf.namelist() if not f.endswith("/")):
+                    cls.poll_message_set("MinistryOfFlat zip doesn't contain unwrapconsole3.exe")
+                    return False
+                return True
+        except Exception as e:
+            cls.poll_message_set(f"Error reading MinistryOfFlat zip: {str(e)}")
             return False
 
     def execute(self, context):
