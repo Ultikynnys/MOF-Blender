@@ -7,7 +7,7 @@ schema_version = "1.0.0"
 id = "ultikynnys_mof_blender"
 name = "MOF Blender"
 tagline = "Wrapper that makes the MOF UV Unwrapper work in Blender"
-version = "1.0.5"
+version = "1.0.6"
 type = "add-on"
 
 # Compatibility
