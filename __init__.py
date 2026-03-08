@@ -576,6 +576,13 @@ class AutoUVOperator(Operator):
             context.collection.objects.link(temp_obj)
             temp_obj.matrix_world = mathutils.Matrix.Identity(4)
 
+            # Deselect all and select only the temporary object.
+            # CRITICAL: We MUST set the active object BEFORE entering Edit Mode or running operators.
+            for obj in context.selected_objects:
+                obj.select_set(False)
+            temp_obj.select_set(True)
+            context.view_layer.objects.active = temp_obj
+
             # If there are seam edges, split them according to the chosen method.
             if any(edge.use_seam for edge in temp_obj.data.edges):
                 bpy.ops.object.mode_set(mode='EDIT')
@@ -592,12 +599,6 @@ class AutoUVOperator(Operator):
                         bmesh.ops.split_edges(bm, edges=hard_edges)
                         bmesh.update_edit_mesh(temp_obj.data)
                 bpy.ops.object.mode_set(mode='OBJECT')
-
-            # Deselect all and select only the temporary object.
-            for obj in context.selected_objects:
-                obj.select_set(False)
-            temp_obj.select_set(True)
-            context.view_layer.objects.active = temp_obj
 
             # Export the temporary object as OBJ.
             name_safe = temp_obj.name.replace(" ", "_")
