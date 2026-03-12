@@ -583,21 +583,27 @@ class AutoUVOperator(Operator):
             temp_obj.select_set(True)
             context.view_layer.objects.active = temp_obj
 
-            # If there are seam edges, split them according to the chosen method.
-            if any(edge.use_seam for edge in temp_obj.data.edges):
+            # Split edges according to the chosen method.
+            # Note: separate_marked_edges requires seam marks; separate_hard_edges
+            # acts on sharp/non-smooth edges which are independent of seam marks,
+            # so its guard must not depend on any(edge.use_seam ...).
+            if props.separate_marked_edges and any(edge.use_seam for edge in temp_obj.data.edges):
                 bpy.ops.object.mode_set(mode='EDIT')
                 bpy.context.view_layer.update()
                 bm = bmesh.from_edit_mesh(temp_obj.data)
-                if props.separate_marked_edges:
-                    marked_edges = [edge for edge in bm.edges if edge.seam]
-                    if marked_edges:
-                        bmesh.ops.split_edges(bm, edges=marked_edges)
-                        bmesh.update_edit_mesh(temp_obj.data)
-                elif props.separate_hard_edges:
-                    hard_edges = [edge for edge in bm.edges if edge.seam and not edge.smooth]
-                    if hard_edges:
-                        bmesh.ops.split_edges(bm, edges=hard_edges)
-                        bmesh.update_edit_mesh(temp_obj.data)
+                marked_edges = [edge for edge in bm.edges if edge.seam]
+                if marked_edges:
+                    bmesh.ops.split_edges(bm, edges=marked_edges)
+                    bmesh.update_edit_mesh(temp_obj.data)
+                bpy.ops.object.mode_set(mode='OBJECT')
+            elif props.separate_hard_edges and any(not edge.smooth for edge in temp_obj.data.edges):
+                bpy.ops.object.mode_set(mode='EDIT')
+                bpy.context.view_layer.update()
+                bm = bmesh.from_edit_mesh(temp_obj.data)
+                hard_edges = [edge for edge in bm.edges if not edge.smooth]
+                if hard_edges:
+                    bmesh.ops.split_edges(bm, edges=hard_edges)
+                    bmesh.update_edit_mesh(temp_obj.data)
                 bpy.ops.object.mode_set(mode='OBJECT')
 
             # Export the temporary object as OBJ.
