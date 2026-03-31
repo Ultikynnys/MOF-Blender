@@ -596,15 +596,30 @@ class AutoUVOperator(Operator):
                     bmesh.ops.split_edges(bm, edges=marked_edges)
                     bmesh.update_edit_mesh(temp_obj.data)
                 bpy.ops.object.mode_set(mode='OBJECT')
-            elif props.separate_hard_edges and any(not edge.smooth for edge in temp_obj.data.edges):
-                bpy.ops.object.mode_set(mode='EDIT')
-                bpy.context.view_layer.update()
-                bm = bmesh.from_edit_mesh(temp_obj.data)
-                hard_edges = [edge for edge in bm.edges if not edge.smooth]
-                if hard_edges:
-                    bmesh.ops.split_edges(bm, edges=hard_edges)
-                    bmesh.update_edit_mesh(temp_obj.data)
-                bpy.ops.object.mode_set(mode='OBJECT')
+            elif props.separate_hard_edges:
+                # Backwards compatible check for hard edges
+                def is_hard(e):
+                    if hasattr(e, "smooth"):
+                        return not e.smooth
+                    return getattr(e, "use_edge_sharp", False)
+                
+                if any(is_hard(edge) for edge in temp_obj.data.edges):
+                    bpy.ops.object.mode_set(mode='EDIT')
+                    bpy.context.view_layer.update()
+                    bm = bmesh.from_edit_mesh(temp_obj.data)
+                    
+                    # For BMesh edges (BMEdge), 'smooth' was removed in 4.1
+                    sharp_layer = bm.edges.layers.bool.get("sharp_edge")
+                    if sharp_layer:
+                        hard_edges = [e for e in bm.edges if e[sharp_layer]]
+                    else:
+                        # Fallback for older versions
+                        hard_edges = [e for e in bm.edges if not getattr(e, "smooth", True)]
+
+                    if hard_edges:
+                        bmesh.ops.split_edges(bm, edges=hard_edges)
+                        bmesh.update_edit_mesh(temp_obj.data)
+                    bpy.ops.object.mode_set(mode='OBJECT')
 
             # Export the temporary object as OBJ.
             name_safe = temp_obj.name.replace(" ", "_")
