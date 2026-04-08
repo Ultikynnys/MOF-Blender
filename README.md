@@ -27,8 +27,8 @@ Less islands, which is easier to texture
 
 
 #### Chair | Hard Surface
-#### MOF 18.31px/m @ UV Islands: 334
-#### Smart Unwrap 11.87px/m  @ UV Islands: 1335
+#### MOF 180.31px/m @ UV Islands: 334
+#### Smart Unwrap 110.87px/m  @ UV Islands: 1335
 
 At higher counts the island count will negatively impact the texture density as well
 
